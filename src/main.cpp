@@ -1,128 +1,123 @@
 #include <SFML/Graphics.hpp>
+#include <vector>
 #include <iostream>
 
-#pragma region imgui
-#include "imgui.h"
-#include "imgui-SFML.h"
-#include "imguiThemes.h"
-#pragma endregion
+#include "particle.h"
+#include "constraint.h"
+#include "input_handler.h"
 
+const int WIDTH = 1080;
+const int HEIGHT = 640;
+const float PARTICLE_RADIUS = 10.0f;
+const float GRAVITY = 10.0f;
+const float TIME_STEP = 0.1f;
 
-//if you want to load OpenGL
-//#include <glad/glad.h>
-//#include <errorReporting.h>
+const int ROW = 10;
+const int COL = 10;
+const float REST_DISTANCE = 30.0f;
 
 int main()
 {
-	sf::RenderWindow window(sf::VideoMode(500, 500), "SFML works!");
+	sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "Cloth Simulation");
+	window.setFramerateLimit(60);
 
+	std::vector<Particle> particles;
+	std::vector<Constraint> constraints;
 
-
-
-	//if you want to load OpenGL.
-	// Note: SFML also uses OpenGL so it will interfere with your code.
-	// If you want to draw both with SFML and your OpenGL code, you will have
-	// to fight with it a little.
-	// I found that calling glDisableVertexAttribArray(0); for attributes 0 - 8
-	// solved some issues sometimes
-	//  
-	//if (!gladLoadGLLoader((GLADloadproc)sf::Context::getFunction))
-	//{
-	//	std::cerr << "Failed to initialize GLAD" << std::endl;
-	//	return -1;
-	//}
-	//enableReportGlErrors();
-
-
-#pragma region imgui
-	ImGui::SFML::Init(window);
-	//you can use whatever imgui theme you like!
-	//ImGui::StyleColorsDark();				
-	//imguiThemes::yellow();
-	//imguiThemes::gray();
-	imguiThemes::green();
-	//imguiThemes::red();
-	//imguiThemes::gray();
-	//imguiThemes::embraceTheDarkness();
-
-	ImGuiIO &io = ImGui::GetIO(); (void)io;
-	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-	io.FontGlobalScale = 2.f;
-	ImGuiStyle &style = ImGui::GetStyle();
-	style.Colors[ImGuiCol_WindowBg].w = 0.5f;
-	//style.Colors[ImGuiCol_DockingEmptyBg].w = 0.f;
-#pragma endregion
-
-
-
-	sf::CircleShape shape(100.f);
-	//window.setVerticalSyncEnabled(true);
-	shape.setFillColor(sf::Color::Green);
-
-	sf::Clock clock;
-
-
-	while (window.isOpen())
+	for (int row = 0; row < ROW; row++)
 	{
-		sf::Event event;
-		while (window.pollEvent(event))
+		for (int col = 0; col < COL; col++) 
 		{
-			
-		#pragma region imgui
-			ImGui::SFML::ProcessEvent(window, event);
-		#pragma endregion
-
-
-			if (event.type == sf::Event::Closed)
-				window.close();
-			else if (event.type == sf::Event::Resized)
-			{
-				// Adjust the viewport when the window is resized
-				sf::FloatRect visibleArea(0, 0, event.size.width, event.size.height);
-				window.setView(sf::View(visibleArea));
-			}
+			float x = col * REST_DISTANCE + WIDTH / 3;
+			float y = row * REST_DISTANCE + HEIGHT / 3;
+			bool pinned = (row == 0);
+			particles.emplace_back(x, y, pinned);
 		}
-
-		//calculate the delta time
-		sf::Time deltaTime = clock.restart();
-		float deltaTimeSeconds = deltaTime.asSeconds();
-
-		//make sure delta time stays within normal bounds, like between one FPS and zero FPS
-		deltaTimeSeconds = std::min(deltaTimeSeconds, 1.f);
-		deltaTimeSeconds = std::max(deltaTimeSeconds, 0.f);
-
-	#pragma region imgui
-		ImGui::SFML::Update(window, deltaTime);
-
-		ImGui::PushStyleColor(ImGuiCol_WindowBg, {});
-		ImGui::PushStyleColor(ImGuiCol_DockingEmptyBg, {});
-		ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
-		ImGui::PopStyleColor(2);
-	#pragma endregion
-
-
-		ImGui::Begin("Hello, world!");
-		ImGui::Button("Look at this pretty button!");
-		ImGui::Text("Hello!");
-		ImGui::End();
-
-		//game code....
-		window.clear();
-		window.draw(shape);
-
-
-	#pragma region imgui
-		ImGui::SFML::Render(window);
-	#pragma endregion
-
-		window.display();
 	}
 
-#pragma region imgui
-	ImGui::SFML::Shutdown();
-#pragma endregion
+	// initialize constraints
+	for (int row = 0; row < ROW; row++)
+	{
+		for (int col = 0; col < COL; col++) 
+		{
+			if (col < COL - 1)
+			{
+				// horizontal constraint
+				constraints.emplace_back(&particles[row * COL + col], &particles[row * COL + col + 1]);
+			}
+			if (row < ROW - 1)
+			{
+				// vertical constraint
+				constraints.emplace_back(&particles[row * COL + col], &particles[(row + 1) * COL + col]);
+			}
+		}
+	}
+	while (window.isOpen()) 
+	{
+		sf::Event event;
+		while (window.pollEvent(event)) 
+		{
+			if (event.type == sf::Event::Closed)
+			{
+				window.close();
+			}
 
-	return 0;
+			// handle mouse clicks
+			InputHandler::handle_mouse_click(event, particles, constraints);
+		}
+
+		// apply gravity and update particles
+		for (auto& particle : particles) 
+		{
+			particle.apply_force(sf::Vector2f(0, GRAVITY));
+			particle.update(TIME_STEP);
+			particle.constrain_to_bounds(WIDTH, HEIGHT);
+		}
+
+		
+		for (size_t i = 0; i < 5; i++)
+		{
+			for (auto& constraint : constraints) 
+			{
+				constraint.satisfy();
+			}
+		}
+	
+		window.clear(sf::Color::Black);
+
+		// draw particles as balls
+		/*
+		for (const auto& particle : particles) 
+		{
+			sf::CircleShape circle(PARTICLE_RADIUS);
+			circle.setFillColor(sf::Color::White);
+			circle.setPosition(particle.position.x - PARTICLE_RADIUS,
+								particle.position.y - PARTICLE_RADIUS);
+			window.draw(circle);
+		}
+		*/
+
+		// draw particles as points
+		for (const auto& particle : particles) 
+		{
+			sf::Vertex point(particle.position, sf::Color::White);
+			window.draw(&point, 1, sf::Points);
+		}
+
+		// draw constraints as lines
+		for (const auto& constraint : constraints) 
+		{
+			if (!constraint.active)
+			{
+				continue;
+			}
+			sf::Vertex line[] = {
+				sf::Vertex(constraint.p1->position, sf::Color::White),
+				sf::Vertex(constraint.p2->position, sf::Color::White),
+			};
+			window.draw(line, 2, sf::Lines);
+		}
+		
+		window.display();
+	}
 }
